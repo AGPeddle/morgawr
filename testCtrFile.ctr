@@ -1,0 +1,25 @@
+{
+    "Control": {
+        "N_steps_x":32,
+        "N_steps_t":1600,
+        "domainWidth":6.28318531,
+        "endTime":2,
+	"conv_tol":0.0001,
+        "iter_num":7,
+	"Solver":"AdamsBashforth3",
+	"Equation":"advection"
+    },
+
+    "Physics":{
+        "diffusionCoeff":1,
+	"viscosity":0.1,
+	"celerity":1,
+	"InitialConditions":"np.sin(x)"
+    },
+
+    "Output": {
+        "loggingLevel":"INFO",
+	"outFileStem":"test1",
+	"nPlots":5
+    }
+}
