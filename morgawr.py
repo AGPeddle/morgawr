@@ -47,11 +47,13 @@ class Control(dict):
             super(Control,self).__setitem__('iter_num',controlData['Control']['iter_num'])
             super(Control,self).__setitem__('Solver',controlData['Control']['Solver'])
             super(Control,self).__setitem__('Equation',controlData['Control']['Equation'])
+            super(Control,self).__setitem__('ExpInt',controlData['Control']['ExpInt'])
 
             physicsParams = ('diffusionCoeff',\
                                'viscosity',\
                                'celerity',\
                                'InitialConditions',\
+                               'IC_Domain',\
                                'Forcing')
 
             for item in physicsParams:
@@ -63,9 +65,14 @@ class Control(dict):
             super(Control,self).__setitem__('logLevel',controlData['Output']['loggingLevel'])
             super(Control,self).__setitem__('outFileStem',controlData['Output']['outFileStem'])
             super(Control,self).__setitem__('nPlots',controlData['Output']['nPlots'])
+            try:
+                super(Control,self).__setitem__('outSuffix','_' + controlData['Output']['outSuffix'])
+            except KeyError:
+                 super(Control,self).__setitem__('outSuffix','')
 
     def __getitem__(self, name):
-        if super(Control, self).__getitem__(name) or name == 'Forcing':
+        safeFalses = ('Forcing','outSuffix','IC_Domain','ExpInt')
+        if super(Control, self).__getitem__(name) or name in safeFalses:
             return super(Control, self).__getitem__(name)
         else:
             logging.error("Required parameter '{}' not present in control file".format(name))
@@ -86,24 +93,37 @@ class Geometry:
             self.x_grid[k] = self.x_grid[k-1] + Lx/float(Nx)
 
 
-class U_xx_memo(collections.abc.Callable):
+class ExponentialIntegrator(collections.abc.Callable):
     """
-    Callable class to implement the second spatial derivative of U
-    Employs memoisation to reduce computational overhead
-    Uses 2nd order central differences
+    Executable class (stateful function) to implement exponential integrator. Computes matrix
+    exponential as T*Lambda*Tinv where Lambda is a diagonal matrix of the eigenvalues and
+    T contains the eigenvectors in columns. Linear operators for various governing equations
+    must be included manually as methods and these method names must match those in the
+    Equations class.
 
-    v1.0 AGP    13 Jan 2015
-
-    Obsolete if using Fourier method, although memoisation could still be
-    applied in principle...
+    v1.0 AGP    15 Feb 2015
     """
-    def __init__(self):
-        self.memo = {}
+    def __init__(self,control,state,geometry,timestep):
+        govEq = getattr(self,control['Equation'])
+        linearOperator = govEq(control,geometry)
+        print(linearOperator)
 
-    def __call__(self,i,j,h,state):
-        if (i,j) not in self.memo:
-            self.memo[i,j] = (state[i-1,j] - 2*state[i,j] + state[i+1,j])/(h**2)
-        return self.memo[i,j]
+        self._eVals, self._eVects = np.linalg.eig(linearOperator)
+        self._eVects_Inv = np.linalg.inv(self._eVects)
+
+        Lam = np.diag(np.exp(self._eVals*timestep))
+        self._integrator = np.dot(np.dot(self._eVects,Lam),self._eVects_Inv)
+
+        self.inverse_LinOp = np.linalg.inv(linearOperator)
+
+    def __call__(self,u):
+        return np.dot(self._integrator,u)
+
+    def diffusion(self,control,geometry):
+        return np.diag(-geometry.k*geometry.k*control['diffusionCoeff'])
+
+    def advection(self,control,geometry):
+        return np.diag(-1j*geometry.k*control['celerity'])
 
 
 class Equations:
@@ -134,40 +154,34 @@ class Equations:
     @staticmethod
     def burgers(u_hat, t, control, geometry):
         """
-        Implements the 1-D burgers equation in a form which can be handled by the Fourier pseudo-spectral
+        Implements the 1-D burgers equation in a form which can be handled by the Fourier spectral
         method.
 
         u_{t} = nu*u_{xx} - u*u_{t}, nu is viscosity
 
         v1.0 AGP    30 Jan 2015
         """
-        #u_hat = fft.fft(u)
-        #ux = fft.ifft(1j*geometry.k*u_hat)
-        #uxx = fft.ifft(-geometry.k*geometry.k*u_hat)
-        #return np.array(-u*ux + control['viscosity']*uxx)
-
         uhx = 1j*geometry.k*u_hat
         u = fft.ifft(u_hat)
         ux = fft.ifft(uhx)
         uhux = fft.fft(u*ux)
         uxx = -geometry.k*geometry.k*u_hat
-        return (-uhux + control['viscosity']*uxx + forcing(t, control, geometry))
+        return (-uhux + control['viscosity']*uxx + Equations.forcing(t, control, geometry))
 
     @staticmethod
     def diffusion(u_hat, t, control, geometry):
         """
-        Implementation of 1-D diffusion equation, again for Fourier pseudo-spectral methods.
+        Implementation of 1-D diffusion equation, again for Fourier spectral methods.
 
         u_{t} = D*u_{xx}
 
-        v1.0 AGP    31 Jan 2015
+        v1.1 AGP    31 Jan 2015
         """
-        #u_hat = fft.fft(u)
-        #uxx = fft.ifft(-geometry.k*geometry.k*u_hat)
-        #return np.array(control['diffusionCoeff']*uxx)
-
-        uxx = -geometry.k*geometry.k*u_hat
-        return control['diffusionCoeff']*uxx + forcing(t, control, geometry)
+        if not control['ExpInt']:
+            linearOut = -geometry.k*geometry.k*u_hat*control['diffusionCoeff']
+        else:
+            linearOut = np.zeros(control['N_x'],dtype=complex)
+        return linearOut + Equations.forcing(t, control, geometry)
 
     @staticmethod
     def advection(u_hat, t, control, geometry):
@@ -178,8 +192,12 @@ class Equations:
 
         v1.0 AGP    09 Feb 2015
         """
-        ux = 1j*geometry.k*u_hat
-        return -control['celerity']*ux + Equations.forcing(t, control, geometry)
+        if not control['ExpInt']:
+            linearOut = -1j*geometry.k*u_hat*control['celerity']
+        else:
+            linearOut = np.zeros(control['N_x'],dtype=complex)
+        return linearOut + Equations.forcing(t, control, geometry)
+
 
 class Empty:
     """
@@ -205,7 +223,7 @@ class Solvers:
     def AdamsBashforth3(control, state, geometry):
         """
         Adams-Bashforth 3rd-order solver. Handles spatial derivatives with the Fourier
-        pseudo-spectral method.
+        spectral method.
 
         v1.0 AGP    13 Jan 2015
         """
@@ -224,9 +242,9 @@ class Solvers:
         j = 0
         start = time.time()
         state[:,1] = state[:,0] + k*govEq(state[:,0], t, control, geometry)
+        t += k
         end = time.time()
         logging.debug("Initial Euler step completed in {:.8f} seconds".format(end-start))
-        t += k
 
         #Second step by AB2:
         j = 1
@@ -248,7 +266,6 @@ class Solvers:
             logging.debug("Timestep {:>4} completed in {:.8f} seconds".format(j,end-start))
 
         logging.info("**********Adams-Bashforth Computation Complete**********")
-        return state
 
     @staticmethod
     def RungeKutta4(control, state, geometry):
@@ -284,7 +301,36 @@ class Solvers:
             logging.debug("Timestep {:>4} completed in {:.8f} seconds".format(j,end-start))
 
         logging.info("**********Runge-Kutta Computation Complete**********")
-        return state
+
+    def MatrixExponential(control, state, geometry):
+        """
+
+        """
+        k = control['Lt']/control['N_t']
+        t = 0
+
+        try:
+            govEq = getattr(Equations,control['Equation'])
+        except AttributeError:
+            logging.critical("Invalid Governing Equation Choice")
+            print('\n Invalid Governing Equation Choice! Implemented equations are: \n' + str(set(dir(Equations)) - set(dir(Empty))) + '\n')
+            raise
+
+        expInt = ExponentialIntegrator(control,state,geometry,k)
+        logging.info("Matrix Exponential Successfully Initialised")
+
+        logging.info("**********Beginning Matrix Exponential Computation**********")
+
+        for j in range(control['N_t']-1):
+            start = time.time()
+            t += k
+            nonLin = govEq(state[:,j], t, control, geometry)
+            state[:,j+1] = expInt(state[:,j]) - np.dot(expInt.InvLinOp,nonLin) + np.dot(expInt.Inverse_LinOp,expInt(nonLin))
+            end = time.time()
+            logging.debug("Timestep {:>4} completed in {:.8f} seconds".format(j,end-start))
+
+        logging.info("**********Matrix Exponential Computation Complete**********")
+
 
 def scaling(control):
     """
@@ -333,6 +379,10 @@ def initialise(controlFileName):
 
     x = geometry.x_grid
     state[:,0] = eval(control['InitialConditions'])
+    if control['IC_Domain']:
+        for ptCtr in range(control['N_x']):
+            if x[ptCtr] < control['IC_Domain'][0] or x[ptCtr] > control['IC_Domain'][1]:
+                state[ptCtr,0] = 0 + 0j
     state[:,0] = fft.fft(state[:,0])
 
     logging.info("Initialisation Complete")
@@ -365,8 +415,9 @@ def output(control, state, geometry):
     plt.xlabel('x')
     plt.ylabel('u')
     plt.legend(labels)
-    plt.savefig(control['outFileStem'] + "_" + control['Equation'] + "_" + control['Solver'] + ".png")
-    logging.info("Plot saved to " + control['outFileStem'] + "_" + control['Equation'] + "_" + control['Solver'] + ".png")
+
+    plt.savefig(control['outFileStem'] + "_" + control['Equation'] + "_" + control['Solver'] + control['outSuffix'] + ".png")
+    logging.info("Plot saved to " + control['outFileStem'] + "_" + control['Equation'] + "_" + control['Solver'] + control['outSuffix'] + ".png")
     plt.show()
     logging.info('Output completed successfully')
 
@@ -387,7 +438,9 @@ def main(controlFileName):
         logging.critical("Invalid Solver Choice")
         print('\n Invalid Solver Choice! Implemented solvers are: \n' + str(set(dir(Solvers)) - set(dir(Empty))) + '\n')
         raise
-    state = solver(control, state, geometry)
+    solver(control, state, geometry)
+    if control['ExpInt']:
+        Solvers.MatrixExponential(control, state, geometry)
 
     output(control, state, geometry)
     logging.info("Computation Completed Successfully!")
