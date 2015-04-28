@@ -47,7 +47,6 @@ class Control(dict):
             super(Control,self).__setitem__('iter_num',controlData['Control']['iter_num'])
             super(Control,self).__setitem__('Solver',controlData['Control']['Solver'])
             super(Control,self).__setitem__('Equation',controlData['Control']['Equation'])
-            super(Control,self).__setitem__('ExpInt',controlData['Control']['ExpInt'])
 
             physicsParams = ('diffusionCoeff',\
                                'viscosity',\
@@ -71,7 +70,7 @@ class Control(dict):
                  super(Control,self).__setitem__('outSuffix','')
 
     def __getitem__(self, name):
-        safeFalses = ('Forcing','outSuffix','IC_Domain','ExpInt')
+        safeFalses = ('Forcing','outSuffix','IC_Domain')
         if super(Control, self).__getitem__(name) or name in safeFalses:
             return super(Control, self).__getitem__(name)
         else:
@@ -177,10 +176,7 @@ class Equations:
 
         v1.1 AGP    31 Jan 2015
         """
-        if not control['ExpInt']:
-            linearOut = -geometry.k*geometry.k*u_hat*control['diffusionCoeff']
-        else:
-            linearOut = np.zeros(control['N_x'],dtype=complex)
+        linearOut = -geometry.k*geometry.k*u_hat*control['diffusionCoeff']
         return linearOut + Equations.forcing(t, control, geometry)
 
     @staticmethod
@@ -192,10 +188,7 @@ class Equations:
 
         v1.0 AGP    09 Feb 2015
         """
-        if not control['ExpInt']:
-            linearOut = -1j*geometry.k*u_hat*control['celerity']
-        else:
-            linearOut = np.zeros(control['N_x'],dtype=complex)
+        linearOut = -1j*geometry.k*u_hat*control['celerity']
         return linearOut + Equations.forcing(t, control, geometry)
 
 
@@ -439,8 +432,6 @@ def main(controlFileName):
         print('\n Invalid Solver Choice! Implemented solvers are: \n' + str(set(dir(Solvers)) - set(dir(Empty))) + '\n')
         raise
     solver(control, state, geometry)
-    if control['ExpInt']:
-        Solvers.MatrixExponential(control, state, geometry)
 
     output(control, state, geometry)
     logging.info("Computation Completed Successfully!")

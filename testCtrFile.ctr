@@ -6,20 +6,21 @@
         "endTime":2,
 	"conv_tol":0.0001,
         "iter_num":7,
-	"Solver":"AdamsBashforth3",
-	"Equation":"advection"
+	"Solver":"MatrixExponential",
+	"Equation":"diffusion"
     },
 
     "Physics":{
         "diffusionCoeff":1,
 	"viscosity":0.1,
-	"celerity":1,
-	"InitialConditions":"np.sin(x)"
+	"celerity":2,
+	"InitialConditions":"1 - np.cos(x)"
     },
 
     "Output": {
         "loggingLevel":"INFO",
 	"outFileStem":"test1",
-	"nPlots":5
+	"nPlots":3,
+	"outSuffix":""
     }
 }
