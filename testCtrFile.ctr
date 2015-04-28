@@ -6,7 +6,7 @@
         "endTime":2,
 	"conv_tol":0.0001,
         "iter_num":7,
-	"Solver":"MatrixExponential",
+	"Solver":"AdamsBashforth3",
 	"Equation":"diffusion"
     },
 
